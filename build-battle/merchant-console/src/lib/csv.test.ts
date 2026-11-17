@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest"
 import { Payment } from "@/data/types"
-import { EXPORT_COLUMNS, exportFilename, toCsv } from "./csv"
+import {
+  DEFAULT_EXPORT_COLUMNS,
+  EXPORT_COLUMNS,
+  exportFilename,
+  exportScopeLabel,
+  parseExportColumns,
+  parseExportScope,
+  toCsv,
+} from "./csv"
 
 /**
  * The export is the file ops hands to a merchant, so a broken cell is a
@@ -76,7 +84,81 @@ describe("toCsv", () => {
   })
 })
 
+describe("column selection (NWP-101)", () => {
+  it("keeps a requested subset in the order requested, not the allowlist order", () => {
+    const selection = parseExportColumns("currency,amount,id")
+    expect(selection).toEqual({ ok: true, columns: ["currency", "amount", "id"] })
+    if (!selection.ok) throw new Error("expected a valid selection")
+    expect(toCsv([payment], selection.columns)).toBe(
+      ["currency,amount,id", "USD,$250.00,pay_0001"].join("\n"),
+    )
+  })
+
+  it("drops duplicate and blank names without reordering", () => {
+    expect(parseExportColumns("amount, id,,amount")).toEqual({
+      ok: true,
+      columns: ["amount", "id"],
+    })
+  })
+
+  it("leaves the card last four out by default", () => {
+    expect(DEFAULT_EXPORT_COLUMNS).not.toContain("last4")
+    expect(DEFAULT_EXPORT_COLUMNS).toEqual(
+      EXPORT_COLUMNS.filter((column) => column !== "last4"),
+    )
+
+    const selection = parseExportColumns(null)
+    if (!selection.ok) throw new Error("expected the defaults")
+    const csv = toCsv([payment], selection.columns)
+    expect(csv.split("\n")[0]).not.toContain("last4")
+    expect(csv).not.toContain("4242")
+  })
+
+  it("includes the last four only when asked for", () => {
+    const selection = parseExportColumns("id,last4")
+    if (!selection.ok) throw new Error("expected a valid selection")
+    expect(toCsv([payment], selection.columns)).toBe(
+      ["id,last4", "pay_0001,4242"].join("\n"),
+    )
+  })
+
+  it("rejects an empty selection rather than producing an empty file", () => {
+    expect(parseExportColumns("")).toEqual({
+      ok: false,
+      error: expect.any(String),
+    })
+    expect(parseExportColumns(" , ,").ok).toBe(false)
+    expect(() => toCsv([payment], [])).toThrow()
+  })
+
+  it("rejects a column that is not on the allowlist", () => {
+    expect(parseExportColumns("id,card_number").ok).toBe(false)
+    expect(parseExportColumns("id,AMOUNT").ok).toBe(false)
+  })
+})
+
+describe("export scope", () => {
+  it("defaults to the current filter and only accepts 'all' otherwise", () => {
+    expect(parseExportScope(null)).toBe("filter")
+    expect(parseExportScope("all")).toBe("all")
+    expect(parseExportScope("everything")).toBe("filter")
+  })
+
+  it("labels the file by scope, using the allowlisted status when filtered", () => {
+    expect(exportScopeLabel("all", { status: "disputed" })).toBe("all")
+    expect(exportScopeLabel("filter", { status: "disputed" })).toBe("disputed")
+    expect(exportScopeLabel("filter", { status: "all", search: "x" })).toBe("filtered")
+    expect(exportScopeLabel("filter", { status: "all" })).toBe("all")
+  })
+})
+
 describe("exportFilename", () => {
+  it("puts the scope before the UTC date", () => {
+    expect(
+      exportFilename(new Date("2026-08-13T23:30:00.000Z"), "disputed"),
+    ).toBe("payments-disputed-2026-08-13.csv")
+  })
+
   it("stamps the UTC date, so two exports on the same day collide by design", () => {
     expect(exportFilename(new Date("2026-03-14T23:00:00.000Z"))).toBe(
       "payments-2026-03-14.csv",
