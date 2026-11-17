@@ -61,6 +61,31 @@ describe("toCsv", () => {
     expect(body).toBe('"Order 1180\nsecond line"')
   })
 
+  it("quotes a bare carriage return so it does not split the row", () => {
+    const cr = { ...payment, description: "Order 1180\rsecond line" }
+    expect(toCsv([cr], ["description"])).toBe(
+      ["description", '"Order 1180\rsecond line"'].join("\n"),
+    )
+  })
+
+  it("defuses text cells that a spreadsheet would run as a formula", () => {
+    for (const lead of ["=", "+", "-", "@"]) {
+      const risky = { ...payment, description: `${lead}SUM(A1:A9)` }
+      expect(toCsv([risky], ["description"])).toBe(
+        ["description", `'${lead}SUM(A1:A9)`].join("\n"),
+      )
+    }
+    const hyperlink = { ...payment, description: '=HYPERLINK("http://x","y")' }
+    expect(toCsv([hyperlink], ["description"])).toBe(
+      ["description", `"'=HYPERLINK(""http://x"",""y"")"`].join("\n"),
+    )
+  })
+
+  it("leaves a refund's minus sign on the amount alone", () => {
+    const refund = { ...payment, amount: -500 }
+    expect(toCsv([refund], ["amount"])).toBe(["amount", "-$5.00"].join("\n"))
+  })
+
   it("resolves the merchant name, and falls back to the id when unknown", () => {
     expect(toCsv([payment], ["merchant"])).toContain("Lumen Coffee Roasters")
     const orphan = { ...payment, merchantId: "mch_missing" }

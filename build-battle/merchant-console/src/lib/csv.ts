@@ -89,9 +89,29 @@ export function exportScopeLabel(
   return "all"
 }
 
+/**
+ * Spreadsheets run a cell that starts with one of these as a formula. These
+ * files go to merchants, so text cells that start this way get a leading
+ * apostrophe, which spreadsheets show as plain text.
+ */
+const FORMULA_TRIGGER = /^[=+\-@\t\r]/
+
+function neutralizeFormula(value: string): string {
+  return FORMULA_TRIGGER.test(value) ? `'${value}` : value
+}
+
 function escapeCell(value: string): string {
-  if (/[",\n]/.test(value)) return `"${value.replace(/"/g, '""')}"`
+  if (/[",\r\n]/.test(value)) return `"${value.replace(/"/g, '""')}"`
   return value
+}
+
+/**
+ * Amounts come from `formatMoney`, so a leading "-" there is a refund sign,
+ * not a formula. Every other column can carry outside text.
+ */
+function safeCell(payment: Payment, column: ExportColumn): string {
+  const value = cell(payment, column)
+  return escapeCell(column === "amount" ? value : neutralizeFormula(value))
 }
 
 function cell(payment: Payment, column: ExportColumn): string {
@@ -128,7 +148,7 @@ export function toCsv(
   }
   const header = columns.join(",")
   const rows = payments.map((payment) =>
-    columns.map((column) => escapeCell(cell(payment, column))).join(","),
+    columns.map((column) => safeCell(payment, column)).join(","),
   )
   return [header, ...rows].join("\n")
 }
